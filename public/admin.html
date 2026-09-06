@@ -1,0 +1,278 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>ASKreader Admin</title>
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<style>
+  html,body,#root { height: 100%; margin: 0; }
+  body { font-family: 'Segoe UI', system-ui, sans-serif; background: #F5F6F2; color: #1B1F27; }
+  button, input, select { font-family: inherit; }
+  * { box-sizing: border-box; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/plain" id="app-source">
+const { useState, useEffect, useCallback } = React;
+
+const ink = "#182238", inkSoft = "#2B3550", paper = "#F5F6F2", paperDeep = "#EEEFE9", line = "#D8DBD2";
+const textPrimary = "#1B1F27", textSecondary = "#5C6472";
+const brass = "#A97D3E", brassDeep = "#8A6530";
+const success = "#2F6E4F", successBg = "#EAF2EC", warn = "#A3502B", warnBg = "#F5E8DF", danger = "#9B3B3B", dangerBg = "#F5E4E2";
+const white = "#FFFFFF";
+const serif = "Georgia, 'Iowan Old Style', serif";
+const sans = "'Segoe UI', system-ui, sans-serif";
+
+const API = "/api";
+function useApi() {
+  const [token, setToken] = useState(localStorage.getItem("askreader_admin_token") || null);
+  const call = useCallback(async (path, opts = {}) => {
+    const res = await fetch(API + path, {
+      ...opts,
+      headers: { "Content-Type": "application/json", ...(token ? { Authorization: "Bearer " + token } : {}), ...(opts.headers || {}) },
+    });
+    const json = await res.json();
+    if (!res.ok) throw json.error || { code: "UNKNOWN", message: "Something went wrong" };
+    return json.data;
+  }, [token]);
+  const login = useCallback(async (email, password) => {
+    const data = await call("/auth/login", { method: "POST", body: JSON.stringify({ email, password }) });
+    localStorage.setItem("askreader_admin_token", data.token);
+    setToken(data.token);
+    return data.user;
+  }, [call]);
+  const logout = useCallback(() => { localStorage.removeItem("askreader_admin_token"); setToken(null); }, []);
+  return { token, call, login, logout };
+}
+
+function Pill({ children, tone = "neutral" }) {
+  const tones = {
+    neutral: { bg: paperDeep, fg: textSecondary }, success: { bg: successBg, fg: success },
+    warn: { bg: warnBg, fg: warn }, danger: { bg: dangerBg, fg: danger }, brass: { bg: "#F3E9D8", fg: brassDeep },
+  };
+  const t = tones[tone];
+  return <span style={{ background: t.bg, color: t.fg, fontSize: 11.5, padding: "2px 8px", border: "1px solid rgba(0,0,0,0.06)", whiteSpace: "nowrap" }}>{children}</span>;
+}
+function Button({ children, onClick, variant = "primary", size = "md", disabled }) {
+  const variants = {
+    primary: { background: ink, color: white, border: "none" },
+    secondary: { background: white, color: ink, border: `1px solid ${line}` },
+    ghost: { background: "transparent", color: textSecondary, border: "none" },
+  };
+  return <button onClick={disabled ? undefined : onClick} style={{ ...variants[variant], padding: size === "sm" ? "6px 10px" : "9px 16px", fontSize: size === "sm" ? 12.5 : 13.5, cursor: disabled ? "default" : "pointer", opacity: disabled ? 0.5 : 1 }}>{children}</button>;
+}
+function statusTone(s) {
+  if (["published", "active"].includes(s)) return "success";
+  if (["in_review", "draft", "scheduled", "Expiring"].includes(s)) return "warn";
+  if (["withdrawn", "archived", "superseded", "expired", "suspended"].includes(s)) return "danger";
+  return "neutral";
+}
+function fmtDate(d) { return d ? new Date(d).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "—"; }
+
+function Login({ onLogin }) {
+  const [email, setEmail] = useState("admin@askreader.test");
+  const [password, setPassword] = useState("Admin@12345");
+  const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(false);
+  async function submit(e) {
+    e.preventDefault(); setBusy(true); setError(null);
+    try { await onLogin(email, password); }
+    catch (err) { setError(err.message); }
+    finally { setBusy(false); }
+  }
+  return (
+    <div style={{ height: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: paper }}>
+      <form onSubmit={submit} style={{ width: 360, background: white, border: `1px solid ${line}`, padding: 32 }}>
+        <div style={{ fontFamily: serif, fontSize: 22, color: ink, marginBottom: 4 }}>ASKreader Admin</div>
+        <div style={{ fontSize: 13, color: textSecondary, marginBottom: 20 }}>Content & subscription administration</div>
+        <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Email" style={{ width: "100%", height: 36, border: `1px solid ${line}`, padding: "0 10px", marginBottom: 10 }} />
+        <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Password" style={{ width: "100%", height: 36, border: `1px solid ${line}`, padding: "0 10px", marginBottom: 16 }} />
+        {error && <div style={{ color: warn, fontSize: 12.5, marginBottom: 12 }}>{error}</div>}
+        <Button disabled={busy}>{busy ? "Signing in…" : "Sign in"}</Button>
+        <div style={{ fontSize: 11.5, color: textSecondary, marginTop: 14, borderTop: `1px solid ${line}`, paddingTop: 12 }}>
+          Demo admin: admin@askreader.test / Admin@12345
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function App() {
+  const { token, call, login, logout } = useApi();
+  const [tab, setTab] = useState("catalogue");
+  const [books, setBooks] = useState(null);
+  const [subscribers, setSubscribers] = useState(null);
+  const [audit, setAudit] = useState(null);
+  const [error, setError] = useState(null);
+  const [showNewBook, setShowNewBook] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      const [b, s, a] = await Promise.all([call("/admin/books"), call("/admin/subscribers"), call("/admin/audit")]);
+      setBooks(b); setSubscribers(s); setAudit(a);
+    } catch (e) { setError(e.message); }
+  }, [call]);
+
+  useEffect(() => { if (token) load(); }, [token]);
+
+  async function setEditionStatus(editionId, status) {
+    try { await call(`/admin/editions/${editionId}/status`, { method: "PATCH", body: JSON.stringify({ status }) }); await load(); }
+    catch (e) { alert(e.message); }
+  }
+  async function extend(userId) {
+    try { await call(`/admin/subscribers/${userId}/entitlement/extend`, { method: "POST" }); await load(); }
+    catch (e) { alert(e.message); }
+  }
+  async function createBook(form) {
+    try { await call("/admin/books", { method: "POST", body: JSON.stringify(form) }); setShowNewBook(false); await load(); }
+    catch (e) { alert(e.message); }
+  }
+
+  if (!token) return <Login onLogin={login} />;
+  if (error) return <div style={{ padding: 30, color: warn }}>Error: {error}</div>;
+  if (!books) return <div style={{ padding: 30, color: textSecondary }}>Loading…</div>;
+
+  return (
+    <div style={{ minHeight: "100vh", background: paper }}>
+      <header style={{ height: 54, display: "flex", alignItems: "center", gap: 14, padding: "0 20px", borderBottom: `1px solid ${line}`, background: white }}>
+        <div style={{ fontFamily: serif, fontSize: 18, color: ink }}>ASKreader Admin</div>
+        <nav style={{ display: "flex", gap: 4, marginLeft: 20 }}>
+          {["catalogue", "subscribers", "audit"].map((t) => (
+            <button key={t} onClick={() => setTab(t)} style={{ padding: "7px 14px", background: tab === t ? paperDeep : "transparent", border: "none", borderBottom: `2px solid ${tab === t ? brass : "transparent"}`, cursor: "pointer", fontSize: 13.5, color: tab === t ? ink : textSecondary, textTransform: "capitalize" }}>{t}</button>
+          ))}
+        </nav>
+        <Button variant="ghost" onClick={logout}>{null}</Button>
+        <div style={{ marginLeft: "auto" }}><Button variant="ghost" onClick={logout}>Log out</Button></div>
+      </header>
+
+      <main style={{ maxWidth: 1040, margin: "0 auto", padding: "30px 24px 60px" }}>
+        {tab === "catalogue" && (
+          <CatalogueTab books={books} onStatus={setEditionStatus} onNewBook={() => setShowNewBook(true)} />
+        )}
+        {tab === "subscribers" && <SubscribersTab subscribers={subscribers} onExtend={extend} />}
+        {tab === "audit" && <AuditTab audit={audit} />}
+      </main>
+
+      {showNewBook && <NewBookModal onCancel={() => setShowNewBook(false)} onSave={createBook} />}
+    </div>
+  );
+}
+
+function SectionHeader({ title, sub, action }) {
+  return (
+    <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 20 }}>
+      <div>
+        <h1 style={{ fontFamily: serif, fontSize: 24, color: ink, margin: "0 0 4px" }}>{title}</h1>
+        {sub && <p style={{ fontSize: 13, color: textSecondary, margin: 0 }}>{sub}</p>}
+      </div>
+      {action}
+    </div>
+  );
+}
+
+function CatalogueTab({ books, onStatus, onNewBook }) {
+  return (
+    <div>
+      <SectionHeader title="Catalogue" sub={`${books.length} titles`} action={<Button onClick={onNewBook}>+ Add title</Button>} />
+      <div style={{ background: white, border: `1px solid ${line}` }}>
+        <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr", gap: 8, padding: "9px 14px", borderBottom: `1px solid ${line}`, fontSize: 11.5, color: textSecondary }}>
+          <span>TITLE</span><span>STATE / SUBJECT</span><span>LATEST EDITION STATUS</span><span>ACTIONS</span>
+        </div>
+        {books.map((b) => (
+          <div key={b.id} style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr", gap: 8, padding: "13px 14px", borderBottom: `1px solid ${line}`, alignItems: "center" }}>
+            <div style={{ fontFamily: serif, fontSize: 14 }}>{b.title}</div>
+            <div style={{ fontSize: 12.5, color: textSecondary }}>{b.state} · {b.subject}</div>
+            <div><Pill tone={statusTone(b.latest_status)}>{b.latest_status || "no edition"}</Pill></div>
+            <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+              {b.latest_status && b.latest_status !== "published" && <Button size="sm" variant="secondary" onClick={() => onStatus(b.edition_id, "published")}>Publish</Button>}
+              {b.latest_status === "published" && <Button size="sm" variant="secondary" onClick={() => onStatus(b.edition_id, "withdrawn")}>Withdraw</Button>}
+            </div>
+          </div>
+        ))}
+      </div>
+      <p style={{ fontSize: 12, color: textSecondary, marginTop: 14 }}>
+        Note: publish/withdraw needs each book's <code>edition_id</code> — this demo view doesn't expose it per-row yet, so those buttons are illustrative until that's wired through. Adding a new title's metadata below works fully.
+      </p>
+    </div>
+  );
+}
+
+function SubscribersTab({ subscribers, onExtend }) {
+  return (
+    <div>
+      <SectionHeader title="Subscribers" sub={`${subscribers.length} accounts`} />
+      <div style={{ background: white, border: `1px solid ${line}` }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 1fr 1fr 100px 110px", gap: 8, padding: "9px 14px", borderBottom: `1px solid ${line}`, fontSize: 11.5, color: textSecondary }}>
+          <span>NAME / EMAIL</span><span>PLAN</span><span>STARTED</span><span>EXPIRES</span><span>STATUS</span><span>ACTIONS</span>
+        </div>
+        {subscribers.map((s) => (
+          <div key={s.id} style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 1fr 1fr 100px 110px", gap: 8, padding: "12px 14px", borderBottom: `1px solid ${line}`, alignItems: "center" }}>
+            <div><div style={{ fontSize: 13 }}>{s.name}</div><div style={{ fontSize: 11.5, color: textSecondary }}>{s.email}</div></div>
+            <div style={{ fontSize: 12.5, color: textSecondary }}>{s.plan_name || "—"}</div>
+            <div style={{ fontSize: 12, color: textSecondary }}>{fmtDate(s.start_at)}</div>
+            <div style={{ fontSize: 12, color: textSecondary }}>{fmtDate(s.end_at)}</div>
+            <div><Pill tone={statusTone(s.status)}>{s.status || "none"}</Pill></div>
+            <Button size="sm" variant="secondary" onClick={() => onExtend(s.id)}>Extend 365d</Button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function AuditTab({ audit }) {
+  return (
+    <div>
+      <SectionHeader title="Audit log" sub="Every administrative action, most recent first" />
+      <div style={{ background: white, border: `1px solid ${line}` }}>
+        {audit.map((e) => (
+          <div key={e.id} style={{ padding: "12px 14px", borderBottom: `1px solid ${line}` }}>
+            <div style={{ fontSize: 13 }}><strong>{e.actor_name || "System"}</strong> — {e.action}</div>
+            <div style={{ fontSize: 11.5, color: textSecondary, marginTop: 2 }}>{e.target_table} · {fmtDate(e.created_at)}</div>
+          </div>
+        ))}
+        {audit.length === 0 && <div style={{ padding: 20, fontSize: 13, color: textSecondary }}>No audit events yet.</div>}
+      </div>
+    </div>
+  );
+}
+
+function NewBookModal({ onCancel, onSave }) {
+  const [form, setForm] = useState({ title: "", author_editor: "", state: "", subject: "", categoryIds: [] });
+  const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(24,34,56,0.35)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <div style={{ width: 460, background: white, border: `1px solid ${line}`, padding: 24 }}>
+        <div style={{ fontFamily: serif, fontSize: 18, marginBottom: 16 }}>Add title</div>
+        {["title", "author_editor", "state", "subject"].map((f) => (
+          <input key={f} placeholder={f.replace("_", " ")} value={form[f]} onChange={(e) => set(f, e.target.value)}
+            style={{ width: "100%", height: 34, border: `1px solid ${line}`, padding: "0 10px", marginBottom: 10 }} />
+        ))}
+        <p style={{ fontSize: 11.5, color: textSecondary, marginBottom: 14 }}>
+          Category assignment and edition/content upload aren't wired into this demo form yet — this creates the book metadata row only.
+        </p>
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+          <Button variant="secondary" onClick={onCancel}>Cancel</Button>
+          <Button onClick={() => onSave(form)}>Save</Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(App, null));
+</script>
+
+<script>
+  (function () {
+    var source = document.getElementById("app-source").textContent;
+    var compiled = Babel.transform(source, { presets: [["react", { runtime: "classic" }]] }).code;
+    (0, eval)(compiled);
+  })();
+</script>
+</body>
+</html>
