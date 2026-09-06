@@ -1,0 +1,418 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>ASKreader</title>
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<style>
+  html,body,#root { height: 100%; margin: 0; }
+  body { font-family: 'Segoe UI', system-ui, sans-serif; background: #F5F6F2; color: #1B1F27; }
+  button { font-family: inherit; }
+  input { font-family: inherit; }
+  * { box-sizing: border-box; }
+  ::selection { background: #F3E9D8; }
+  ::-webkit-scrollbar { width: 10px; }
+  ::-webkit-scrollbar-thumb { background: #D8DBD2; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useCallback, useMemo } = React;
+
+/* ---------- design tokens ---------- */
+const ink = "#182238", inkSoft = "#2B3550", paper = "#F5F6F2", paperDeep = "#EEEFE9", line = "#D8DBD2";
+const textPrimary = "#1B1F27", textSecondary = "#5C6472";
+const brass = "#A97D3E", brassDeep = "#8A6530";
+const success = "#2F6E4F", warn = "#A3502B", white = "#FFFFFF";
+const serif = "Georgia, 'Iowan Old Style', serif";
+const sans = "'Segoe UI', system-ui, sans-serif";
+
+/* ---------- API ---------- */
+const API = "/api";
+function useApi() {
+  const [token, setToken] = useState(localStorage.getItem("askreader_token") || null);
+  const call = useCallback(async (path, opts = {}) => {
+    const res = await fetch(API + path, {
+      ...opts,
+      headers: { "Content-Type": "application/json", ...(token ? { Authorization: "Bearer " + token } : {}), ...(opts.headers || {}) },
+    });
+    const json = await res.json();
+    if (!res.ok) throw json.error || { code: "UNKNOWN", message: "Something went wrong" };
+    return json.data;
+  }, [token]);
+  const login = useCallback(async (email, password) => {
+    const data = await call("/auth/login", { method: "POST", body: JSON.stringify({ email, password }) });
+    localStorage.setItem("askreader_token", data.token);
+    setToken(data.token);
+  }, [call]);
+  const logout = useCallback(() => { localStorage.removeItem("askreader_token"); setToken(null); }, []);
+  return { token, call, login, logout };
+}
+
+/* ---------- small UI ---------- */
+function Pill({ children, tone = "neutral" }) {
+  const tones = {
+    neutral: { bg: paperDeep, fg: textSecondary },
+    success: { bg: "#EAF2EC", fg: success },
+    warn: { bg: "#F5E8DF", fg: warn },
+    brass: { bg: "#F3E9D8", fg: brassDeep },
+  };
+  const t = tones[tone];
+  return <span style={{ background: t.bg, color: t.fg, fontSize: 12, padding: "3px 9px", display: "inline-flex", alignItems: "center", gap: 5, border: "1px solid rgba(0,0,0,0.06)", whiteSpace: "nowrap" }}>{children}</span>;
+}
+function Button({ children, onClick, disabled, variant = "primary" }) {
+  const styles = {
+    primary: { background: ink, color: white, border: "none" },
+    secondary: { background: white, color: ink, border: `1px solid ${line}` },
+    ghost: { background: "transparent", color: textSecondary, border: "none" },
+  };
+  return <button onClick={onClick} disabled={disabled} style={{ ...styles[variant], padding: "9px 16px", fontSize: 13.5, cursor: disabled ? "default" : "pointer", opacity: disabled ? 0.5 : 1 }}>{children}</button>;
+}
+function Spinner({ label }) {
+  return <div style={{ padding: 24, color: textSecondary, fontSize: 13, fontFamily: sans }}>{label || "Loading…"}</div>;
+}
+
+/* ---------- Login ---------- */
+function Login({ onLogin }) {
+  const [email, setEmail] = useState("reader@askreader.test");
+  const [password, setPassword] = useState("Reader@12345");
+  const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  async function submit(e) {
+    e.preventDefault();
+    setBusy(true); setError(null);
+    try { await onLogin(email, password); }
+    catch (err) { setError(err.message || "Login failed"); }
+    finally { setBusy(false); }
+  }
+
+  return (
+    <div style={{ height: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: paper }}>
+      <form onSubmit={submit} style={{ width: 360, background: white, border: `1px solid ${line}`, padding: 36 }}>
+        <div style={{ width: 26, height: 26, background: ink, display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 14 }}>
+          <span style={{ color: brass, fontFamily: serif, fontSize: 15, fontWeight: 700 }}>A</span>
+        </div>
+        <div style={{ fontFamily: serif, fontSize: 24, color: ink, marginBottom: 4 }}>ASKreader</div>
+        <div style={{ fontSize: 13, color: textSecondary, marginBottom: 24 }}>Sign in to your legal library</div>
+        <label style={{ fontSize: 12, color: textSecondary, display: "block", marginBottom: 4 }}>Email</label>
+        <input value={email} onChange={(e) => setEmail(e.target.value)} style={{ width: "100%", height: 38, border: `1px solid ${line}`, padding: "0 10px", marginBottom: 14 }} />
+        <label style={{ fontSize: 12, color: textSecondary, display: "block", marginBottom: 4 }}>Password</label>
+        <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} style={{ width: "100%", height: 38, border: `1px solid ${line}`, padding: "0 10px", marginBottom: 20 }} />
+        {error && <div style={{ color: warn, fontSize: 12.5, marginBottom: 14 }}>{error}</div>}
+        <Button disabled={busy}>{busy ? "Signing in…" : "Sign in"}</Button>
+        <div style={{ fontSize: 11.5, color: textSecondary, marginTop: 18, lineHeight: 1.6, borderTop: `1px solid ${line}`, paddingTop: 14 }}>
+          Demo accounts:<br />
+          reader@askreader.test / Reader@12345<br />
+          admin@askreader.test / Admin@12345
+        </div>
+      </form>
+    </div>
+  );
+}
+
+/* ---------- Sidebar ---------- */
+function Sidebar({ categories, onSelectCategory, activeCategoryId, onNav, activeNav }) {
+  const [expanded, setExpanded] = useState(() => {
+    const first = {}; if (categories[0]) first[categories[0].id] = true; return first;
+  });
+  return (
+    <aside style={{ width: 250, flexShrink: 0, borderRight: `1px solid ${line}`, background: white, overflowY: "auto" }}>
+      <div style={{ padding: "14px 14px 6px" }}>
+        <button onClick={() => onNav("dashboard")} style={navBtnStyle(activeNav === "dashboard")}>Dashboard</button>
+        <button onClick={() => onNav("account")} style={navBtnStyle(activeNav === "account")}>Subscription</button>
+      </div>
+      <div style={{ padding: "10px 14px 4px", fontSize: 11, letterSpacing: 0.4, color: textSecondary, borderTop: `1px solid ${line}`, marginTop: 6 }}>LIBRARY</div>
+      {categories.map((c) => (
+        <div key={c.id}>
+          <button onClick={() => setExpanded((p) => ({ ...p, [c.id]: !p[c.id] }))}
+            style={{ width: "100%", display: "flex", alignItems: "center", gap: 8, padding: "9px 14px", background: "transparent", border: "none", cursor: "pointer", fontSize: 13.5, color: ink, textAlign: "left" }}>
+            <span>{expanded[c.id] ? "▾" : "▸"}</span>
+            <span style={{ flex: 1 }}>{c.name}</span>
+          </button>
+          {expanded[c.id] && (
+            <button onClick={() => onSelectCategory(c)}
+              style={{ width: "calc(100% - 34px)", marginLeft: 34, textAlign: "left", background: activeCategoryId === c.id ? paperDeep : "transparent", border: "none", color: brassDeep, fontSize: 12.5, padding: "6px 8px", cursor: "pointer", marginBottom: 4 }}>
+              View all ({c.book_count})
+            </button>
+          )}
+        </div>
+      ))}
+    </aside>
+  );
+}
+function navBtnStyle(active) {
+  return { width: "100%", display: "flex", alignItems: "center", padding: "8px 14px", background: active ? paperDeep : "transparent", border: "none", borderLeft: `2px solid ${active ? brass : "transparent"}`, color: active ? ink : textSecondary, cursor: "pointer", fontSize: 13.5, textAlign: "left" };
+}
+
+/* ---------- App ---------- */
+function App() {
+  const { token, call, login, logout } = useApi();
+  const [user, setUser] = useState(null);
+  const [entitlement, setEntitlement] = useState(null);
+  const [categories, setCategories] = useState([]);
+  const [nav, setNav] = useState("dashboard");
+  const [activeCategory, setActiveCategory] = useState(null);
+  const [activeBook, setActiveBook] = useState(null);
+  const [query, setQuery] = useState("");
+  const [searchResults, setSearchResults] = useState(null);
+  const [searching, setSearching] = useState(false);
+  const [loadError, setLoadError] = useState(null);
+
+  const loadHome = useCallback(async () => {
+    try {
+      const [me, ent, cats] = await Promise.all([call("/auth/me"), call("/me/entitlement"), call("/categories")]);
+      setUser(me); setEntitlement(ent); setCategories(cats);
+    } catch (e) { setLoadError(e.message); }
+  }, [call]);
+
+  useEffect(() => { if (token) loadHome(); }, [token]);
+
+  async function runSearch(e) {
+    e.preventDefault();
+    if (!query.trim()) { setSearchResults(null); return; }
+    setSearching(true);
+    try { setSearchResults(await call(`/search?q=${encodeURIComponent(query)}`)); }
+    catch (e) { setSearchResults([]); }
+    finally { setSearching(false); }
+  }
+
+  if (!token) return <Login onLogin={login} />;
+  if (!user) return <div style={{ height: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: paper, color: textSecondary }}>{loadError ? `Error: ${loadError}` : "Loading your library…"}</div>;
+
+  const daysLeft = entitlement ? Math.ceil((new Date(entitlement.end_at) - Date.now()) / 86400000) : null;
+
+  return (
+    <div style={{ height: "100vh", display: "flex", flexDirection: "column" }}>
+      <header style={{ height: 54, flexShrink: 0, display: "flex", alignItems: "center", gap: 14, padding: "0 16px", borderBottom: `1px solid ${line}`, background: white }}>
+        <div onClick={() => { setNav("dashboard"); setActiveBook(null); setSearchResults(null); setQuery(""); }} style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+          <div style={{ width: 22, height: 22, background: ink, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <span style={{ color: brass, fontFamily: serif, fontSize: 13 }}>A</span>
+          </div>
+          <span style={{ fontFamily: serif, fontSize: 18, color: ink }}>ASKreader</span>
+        </div>
+        <form onSubmit={runSearch} style={{ flex: 1, maxWidth: 420, marginLeft: 10 }}>
+          <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search your library…"
+            style={{ width: "100%", height: 34, border: `1px solid ${line}`, background: paperDeep, padding: "0 12px", fontSize: 13 }} />
+        </form>
+        {entitlement && <Pill tone={daysLeft <= 30 ? "warn" : "success"}>{entitlement.plan_name} · {daysLeft}d left</Pill>}
+        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 12 }}>
+          <span style={{ fontSize: 13, color: textSecondary }}>{user.name}</span>
+          <Button variant="ghost" onClick={logout}>Log out</Button>
+        </div>
+      </header>
+
+      <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
+        {searchResults ? (
+          <SearchResults results={searchResults} query={query} searching={searching}
+            onOpen={async (bookId) => { setSearchResults(null); setQuery(""); const book = await call(`/books/${bookId}`); setActiveBook(book); setNav("book"); }}
+            onClear={() => { setSearchResults(null); setQuery(""); }} />
+        ) : (
+          <>
+            <Sidebar categories={categories} activeCategoryId={activeCategory?.id} activeNav={nav}
+              onSelectCategory={(c) => { setActiveCategory(c); setNav("category"); }}
+              onNav={(n) => { setNav(n); setActiveBook(null); }} />
+            <main style={{ flex: 1, overflowY: "auto" }}>
+              {nav === "dashboard" && <Dashboard entitlement={entitlement} categories={categories} daysLeft={daysLeft} onBrowse={(c) => { setActiveCategory(c); setNav("category"); }} />}
+              {nav === "category" && <CategoryView category={activeCategory} call={call} onOpenBook={(b) => { setActiveBook(b); setNav("book"); }} />}
+              {nav === "book" && activeBook && <BookReader book={activeBook} call={call} onBuySuccess={loadHome} />}
+              {nav === "account" && <AccountView entitlement={entitlement} user={user} />}
+            </main>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function SectionLabel({ children }) {
+  return <div style={{ fontSize: 12, letterSpacing: 0.3, color: textSecondary, marginBottom: 10 }}>{children}</div>;
+}
+
+function Dashboard({ entitlement, categories, daysLeft, onBrowse }) {
+  return (
+    <div style={{ maxWidth: 880, margin: "0 auto", padding: "36px 28px 60px" }}>
+      <p style={{ fontSize: 12, color: textSecondary, margin: 0 }}>{new Date().toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}</p>
+      <h1 style={{ fontFamily: serif, fontSize: 28, fontWeight: 500, margin: "6px 0 20px", color: ink }}>Welcome back</h1>
+
+      {entitlement && (
+        <div style={{ border: `1px solid ${line}`, padding: "16px 18px", display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 30, background: white }}>
+          <div>
+            <div style={{ fontSize: 12, color: textSecondary, marginBottom: 3 }}>Subscription</div>
+            <div style={{ fontFamily: serif, fontSize: 16, color: ink }}>{entitlement.plan_name} · expires {new Date(entitlement.end_at).toLocaleDateString("en-IN")}</div>
+          </div>
+          <Pill tone={daysLeft <= 30 ? "warn" : "success"}>{daysLeft} days remaining</Pill>
+        </div>
+      )}
+
+      <SectionLabel>Browse the library</SectionLabel>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        {categories.map((c) => (
+          <button key={c.id} onClick={() => onBrowse(c)} style={{ textAlign: "left", border: `1px solid ${line}`, background: white, padding: 16, cursor: "pointer" }}>
+            <div style={{ fontFamily: serif, fontSize: 15.5, color: ink, marginBottom: 6 }}>{c.name}</div>
+            <div style={{ fontSize: 12.5, color: brassDeep }}>{c.book_count} titles →</div>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function CategoryView({ category, call, onOpenBook }) {
+  const [books, setBooks] = useState(null);
+  useEffect(() => { setBooks(null); call(`/categories/${category.id}/books`).then(setBooks); }, [category.id]);
+  return (
+    <div style={{ maxWidth: 880, margin: "0 auto", padding: "36px 28px 60px" }}>
+      <h1 style={{ fontFamily: serif, fontSize: 24, color: ink, marginBottom: 4 }}>{category.name}</h1>
+      <p style={{ fontSize: 13, color: textSecondary, marginBottom: 22 }}>{category.book_count} titles</p>
+      {!books && <Spinner />}
+      {books && books.map((b) => (
+        <button key={b.id} onClick={() => onOpenBook(b)} style={{ display: "flex", width: "100%", gap: 14, textAlign: "left", background: white, border: "none", borderBottom: `1px solid ${line}`, padding: "16px 4px", cursor: "pointer" }}>
+          <div style={{ width: 42, height: 56, flexShrink: 0, background: ink, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <span style={{ color: brass, fontFamily: serif, fontSize: 18 }}>{b.title[0]}</span>
+          </div>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontFamily: serif, fontSize: 15.5, color: textPrimary, marginBottom: 3 }}>{b.title}</div>
+            <div style={{ fontSize: 12, color: textSecondary }}>{b.state} · {b.author_editor || "—"}</div>
+            <div style={{ marginTop: 6 }}>
+              {b.version_label ? <Pill tone="brass">{b.version_label}</Pill> : <Pill tone="warn">No published edition</Pill>}
+            </div>
+          </div>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function SearchResults({ results, query, searching, onOpen, onClear }) {
+  return (
+    <div style={{ flex: 1, overflowY: "auto" }}>
+      <div style={{ maxWidth: 760, margin: "0 auto", padding: "30px 28px" }}>
+        <button onClick={onClear} style={{ background: "none", border: "none", color: textSecondary, cursor: "pointer", fontSize: 13, marginBottom: 16 }}>← Back to library</button>
+        {searching && <Spinner label="Searching…" />}
+        {!searching && (
+          <>
+            <p style={{ fontSize: 13, color: textSecondary, marginBottom: 18 }}>{results.length} result{results.length !== 1 ? "s" : ""} for "{query}"</p>
+            {results.map((r, i) => (
+              <button key={i} onClick={() => onOpen(r.book_id)} style={{ display: "block", width: "100%", textAlign: "left", background: "transparent", border: "none", borderBottom: `1px solid ${line}`, padding: "14px 2px", cursor: "pointer" }}>
+                <div style={{ fontFamily: serif, fontSize: 15, color: textPrimary }}>{r.title}</div>
+                <div style={{ fontSize: 12, color: brassDeep, margin: "3px 0 6px" }}>{r.book_title}</div>
+                <div style={{ fontSize: 13, color: textSecondary, lineHeight: 1.5 }}>{(r.content || "").slice(0, 140)}…</div>
+              </button>
+            ))}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function BookReader({ book, call, onBuySuccess }) {
+  const [sections, setSections] = useState(null);
+  const [activeIdx, setActiveIdx] = useState(0);
+  const [locked, setLocked] = useState(null);
+  const [plans, setPlans] = useState(null);
+  const [buying, setBuying] = useState(false);
+
+  const publishedEdition = book.editions?.find((e) => e.status === "published") || (book.edition_id ? { id: book.edition_id } : null);
+
+  const load = useCallback(async () => {
+    setSections(null); setLocked(null);
+    if (!publishedEdition) return;
+    try { setSections(await call(`/books/${book.id}/editions/${publishedEdition.id}/sections`)); }
+    catch (e) { setLocked(e); }
+  }, [book, call]);
+
+  useEffect(() => { load(); }, [load]);
+  useEffect(() => { if (locked) call("/plans").then(setPlans); }, [locked]);
+
+  async function buy(planId) {
+    setBuying(true);
+    try {
+      const order = await call("/orders", { method: "POST", body: JSON.stringify({ planId }) });
+      await call(`/orders/${order.id}/mock-pay`, { method: "POST" });
+      await onBuySuccess();
+      await load();
+    } catch (e) { alert(e.message); }
+    finally { setBuying(false); }
+  }
+
+  return (
+    <div style={{ maxWidth: 780, margin: "0 auto", padding: "36px 28px 60px" }}>
+      <h1 style={{ fontFamily: serif, fontSize: 22, color: ink, marginBottom: 4 }}>{book.title}</h1>
+      <div style={{ fontSize: 12.5, color: textSecondary, marginBottom: 24 }}>{book.state} · {book.author_editor}</div>
+
+      {!publishedEdition && <div style={{ color: warn, fontSize: 13 }}>This title has no published edition yet.</div>}
+
+      {locked && (
+        <div style={{ border: `1px solid ${brass}`, background: "#FBF4E8", padding: 22, marginBottom: 20 }}>
+          <div style={{ fontFamily: serif, fontSize: 16, color: brassDeep, marginBottom: 8 }}>
+            {locked.code === "ENTITLEMENT_EXPIRED" ? "Your subscription has expired" : "This title isn't covered by your plan"}
+          </div>
+          <div style={{ fontSize: 13, color: textSecondary, marginBottom: 14 }}>{locked.message}</div>
+          {plans && plans.map((p) => (
+            <button key={p.id} onClick={() => buy(p.id)} disabled={buying}
+              style={{ display: "block", width: "100%", textAlign: "left", background: white, border: `1px solid ${line}`, padding: "10px 12px", marginBottom: 6, cursor: "pointer" }}>
+              {p.name} — ₹{(p.price_paise / 100).toLocaleString("en-IN")} / {p.duration_days} days
+              <span style={{ float: "right", color: brassDeep, fontSize: 12 }}>{buying ? "Processing…" : "Choose"}</span>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {!locked && !sections && publishedEdition && <Spinner />}
+
+      {!locked && sections && (
+        <div style={{ display: "flex", gap: 24 }}>
+          <div style={{ width: 210, flexShrink: 0 }}>
+            {sections.map((s, i) => (
+              <button key={s.id} onClick={() => setActiveIdx(i)}
+                style={{ display: "block", width: "100%", textAlign: "left", background: i === activeIdx ? paperDeep : "transparent", border: "none", borderLeft: `2px solid ${i === activeIdx ? brass : "transparent"}`, padding: "8px 10px", fontSize: 12.5, color: i === activeIdx ? ink : textSecondary, cursor: "pointer" }}>
+                {s.title}
+              </button>
+            ))}
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <h2 style={{ fontFamily: serif, fontSize: 19, color: textPrimary, marginBottom: 14 }}>{sections[activeIdx].title}</h2>
+            {sections[activeIdx].content.split("\n").map((p, i) => (
+              <p key={i} style={{ fontFamily: serif, fontSize: 15.5, lineHeight: 1.75, color: textPrimary, marginBottom: 14 }}>{p}</p>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AccountView({ entitlement, user }) {
+  const rows = [
+    ["Name", user.name],
+    ["Email", user.email],
+    ["Plan", entitlement?.plan_name || "No active plan"],
+    ["Started", entitlement ? new Date(entitlement.start_at).toLocaleDateString("en-IN") : "—"],
+    ["Expires", entitlement ? new Date(entitlement.end_at).toLocaleDateString("en-IN") : "—"],
+    ["Status", entitlement?.status || "—"],
+  ];
+  return (
+    <div style={{ maxWidth: 620, margin: "0 auto", padding: "36px 28px 60px" }}>
+      <h1 style={{ fontFamily: serif, fontSize: 24, color: ink, marginBottom: 20 }}>Subscription and account</h1>
+      <div style={{ border: `1px solid ${line}`, background: white }}>
+        {rows.map(([label, value], i) => (
+          <div key={i} style={{ display: "flex", padding: "13px 16px", borderBottom: i < rows.length - 1 ? `1px solid ${line}` : "none" }}>
+            <div style={{ width: 140, flexShrink: 0, fontSize: 12.5, color: textSecondary }}>{label}</div>
+            <div style={{ fontSize: 13.5, color: textPrimary }}>{value}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
