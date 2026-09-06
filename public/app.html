@@ -20,7 +20,7 @@
 <body>
 <div id="root"></div>
 
-<script type="text/babel" data-presets="react">
+<script type="text/plain" id="app-source">
 const { useState, useEffect, useCallback, useMemo } = React;
 
 /* ---------- design tokens ---------- */
@@ -412,7 +412,18 @@ function AccountView({ entitlement, user }) {
   );
 }
 
-ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+ReactDOM.createRoot(document.getElementById("root")).render(/* @__PURE__ */ React.createElement(App, null));
+</script>
+
+<script>
+  // Manually transform and run only this page's own script (by id), instead of
+  // letting Babel auto-scan every <script> tag on the page — that auto-scan is
+  // what breaks when a browser extension injects its own scripts into the DOM.
+  (function () {
+    var source = document.getElementById("app-source").textContent;
+    var compiled = Babel.transform(source, { presets: ["react"] }).code;
+    (0, eval)(compiled);
+  })();
 </script>
 </body>
 </html>
