@@ -1,0 +1,93 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>ASKreader — API wiring demo</title>
+  <style>
+    body { font-family: 'IBM Plex Sans', system-ui, sans-serif; background: #F5F6F2; color: #1B1F27; max-width: 720px; margin: 40px auto; padding: 0 20px; }
+    h1 { font-family: Georgia, serif; }
+    button { background: #182238; color: white; border: none; padding: 8px 14px; cursor: pointer; margin-right: 8px; }
+    input { padding: 6px 8px; border: 1px solid #D8DBD2; margin-right: 6px; }
+    .card { border: 1px solid #D8DBD2; background: white; padding: 14px 16px; margin-bottom: 10px; }
+    .muted { color: #5C6472; font-size: 13px; }
+    pre { background: #EEEFE9; padding: 10px; overflow-x: auto; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <h1>ASKreader — this Repl is alive</h1>
+  <p class="muted">
+    This page exists to prove the backend works end to end. It is NOT the real reader UI —
+    swap in <code>askreader.jsx</code> (built with Vite) once this baseline is confirmed working.
+    See <code>docs/architecture-and-deployment.md</code>.
+  </p>
+
+  <div class="card">
+    <strong>1. Log in as the seeded demo reader</strong><br /><br />
+    <input id="email" value="reader@askreader.test" />
+    <input id="password" value="Reader@12345" type="password" />
+    <button onclick="login()">Log in</button>
+    <div id="loginResult" class="muted"></div>
+  </div>
+
+  <div class="card">
+    <strong>2. Browse categories</strong><br /><br />
+    <button onclick="loadCategories()">Load categories</button>
+    <div id="categories"></div>
+  </div>
+
+  <div class="card">
+    <strong>3. Read a section (entitlement-gated)</strong>
+    <p class="muted">Uses the first book/edition/section found. Try logging out (clear token) and re-running this to see a 403.</p>
+    <button onclick="readFirstSection()">Fetch a section</button>
+    <div id="reading"></div>
+  </div>
+
+  <script>
+    let token = null;
+
+    async function api(path, opts = {}) {
+      const res = await fetch('/api' + path, {
+        ...opts,
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: 'Bearer ' + token } : {}),
+          ...(opts.headers || {}),
+        },
+      });
+      return res.json();
+    }
+
+    async function login() {
+      const email = document.getElementById('email').value;
+      const password = document.getElementById('password').value;
+      const { data, error } = await api('/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) });
+      if (error) { document.getElementById('loginResult').textContent = 'Error: ' + error.message; return; }
+      token = data.token;
+      document.getElementById('loginResult').textContent = 'Logged in as ' + data.user.name + ' — token stored in memory.';
+    }
+
+    async function loadCategories() {
+      const { data, error } = await api('/categories');
+      document.getElementById('categories').innerHTML = error
+        ? 'Error: ' + error.message
+        : data.map((c) => `<div>${c.name} — ${c.book_count} title(s)</div>`).join('');
+    }
+
+    async function readFirstSection() {
+      const el = document.getElementById('reading');
+      const cats = await api('/categories');
+      if (!cats.data?.length) { el.textContent = 'No categories seeded yet — run npm run seed.'; return; }
+      const books = await api('/categories/' + cats.data[0].id + '/books');
+      if (!books.data?.length) { el.textContent = 'No books in this category.'; return; }
+      const book = books.data[0];
+      if (!book.edition_id) { el.textContent = 'This book has no published edition.'; return; }
+      const sections = await api(`/books/${book.id}/editions/${book.edition_id}/sections`);
+      if (sections.error) {
+        el.innerHTML = `<pre>${JSON.stringify(sections.error, null, 2)}</pre>`;
+        return;
+      }
+      el.innerHTML = `<h3>${book.title}</h3>` + sections.data.map((s) => `<h4>${s.title}</h4><p>${(s.content || '').replace(/\n/g, '<br/>')}</p>`).join('');
+    }
+  </script>
+</body>
+</html>
