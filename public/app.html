@@ -12,6 +12,22 @@
   button { font-family: inherit; }
   input { font-family: inherit; }
   * { box-sizing: border-box; }
+  /* Responsive: stack the sidebar above content instead of overflowing off
+     the right edge of narrow phone screens. */
+  @media (max-width: 760px) {
+    .app-shell { flex-direction: column !important; }
+    .app-sidebar { width: 100% !important; border-right: none !important; }
+    .reader-layout { flex-direction: column !important; }
+    .reader-toc { width: 100% !important; max-height: 240px; }
+    .reader-content { min-width: 0 !important; padding: 20px 16px !important; }
+  }
+  /* Lithium-style reading typography: justified, first-line indented, warm
+     sepia page for the reading pane specifically. */
+  .reading-pane p.body-para {
+    text-align: justify;
+    text-indent: 1.5em;
+  }
+  .reading-pane p.body-para:first-of-type { text-indent: 0; }
   ::selection { background: #F3E9D8; }
   ::-webkit-scrollbar { width: 10px; }
   ::-webkit-scrollbar-thumb { background: #D8DBD2; }
@@ -121,7 +137,7 @@ function Sidebar({ categories, onSelectCategory, activeCategoryId, onNav, active
     const first = {}; if (categories[0]) first[categories[0].id] = true; return first;
   });
   return (
-    <aside style={{ width: 250, flexShrink: 0, borderRight: `1px solid ${line}`, background: white, overflowY: "auto" }}>
+    <aside className="app-sidebar" style={{ width: 250, flexShrink: 0, borderRight: `1px solid ${line}`, background: white, overflowY: "auto" }}>
       <div style={{ padding: "14px 14px 6px" }}>
         <button onClick={() => onNav("dashboard")} style={navBtnStyle(activeNav === "dashboard")}>Dashboard</button>
         <button onClick={() => onNav("account")} style={navBtnStyle(activeNav === "account")}>Subscription</button>
@@ -206,7 +222,7 @@ function App() {
         </div>
       </header>
 
-      <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
+      <div className="app-shell" style={{ flex: 1, display: "flex", minHeight: 0 }}>
         {searchResults ? (
           <SearchResults results={searchResults} query={query} searching={searching}
             onOpen={async (bookId) => { setSearchResults(null); setQuery(""); const book = await call(`/books/${bookId}`); setActiveBook(book); setNav("book"); }}
@@ -313,18 +329,26 @@ function SearchResults({ results, query, searching, onOpen, onClear }) {
 
 function BookReader({ book, call, onBuySuccess }) {
   const [sections, setSections] = useState(null);
-  const [activeIdx, setActiveIdx] = useState(0);
+  const [activeSectionId, setActiveSectionId] = useState(null);
+  const [expandedChapters, setExpandedChapters] = useState({});
   const [locked, setLocked] = useState(null);
   const [plans, setPlans] = useState(null);
   const [buying, setBuying] = useState(false);
+  const [tocFilter, setTocFilter] = useState("");
 
   const publishedEdition = book.editions?.find((e) => e.status === "published") || (book.edition_id ? { id: book.edition_id } : null);
 
   const load = useCallback(async () => {
     setSections(null); setLocked(null);
     if (!publishedEdition) return;
-    try { setSections(await call(`/books/${book.id}/editions/${publishedEdition.id}/sections`)); }
-    catch (e) { setLocked(e); }
+    try {
+      const data = await call(`/books/${book.id}/editions/${publishedEdition.id}/sections`);
+      setSections(data);
+      const firstChapter = data.find((s) => !s.parent_id);
+      const firstLeaf = data.find((s) => s.parent_id);
+      if (firstChapter) setExpandedChapters({ [firstChapter.id]: true });
+      if (firstLeaf) setActiveSectionId(firstLeaf.id);
+    } catch (e) { setLocked(e); }
   }, [book, call]);
 
   useEffect(() => { load(); }, [load]);
@@ -341,8 +365,29 @@ function BookReader({ book, call, onBuySuccess }) {
     finally { setBuying(false); }
   }
 
+  // Build a chapter -> sections tree from the flat, parent_id-linked list
+  // the API returns (chapters have parent_id null, sections point to their
+  // chapter's id) instead of showing everything as one flat, ungrouped list.
+  const chapters = useMemo(() => {
+    if (!sections) return [];
+    const byParent = {};
+    sections.filter((s) => s.parent_id).forEach((s) => {
+      (byParent[s.parent_id] = byParent[s.parent_id] || []).push(s);
+    });
+    return sections
+      .filter((s) => !s.parent_id)
+      .map((chap) => ({ ...chap, children: byParent[chap.id] || [] }))
+      .filter((chap) => chap.children.length > 0);
+  }, [sections]);
+
+  const activeSection = sections?.find((s) => s.id === activeSectionId);
+
+  const filteredChapters = tocFilter.trim()
+    ? chapters.map((c) => ({ ...c, children: c.children.filter((s) => s.title.toLowerCase().includes(tocFilter.toLowerCase())) })).filter((c) => c.children.length)
+    : chapters;
+
   return (
-    <div style={{ maxWidth: 780, margin: "0 auto", padding: "36px 28px 60px" }}>
+    <div className="reader-content" style={{ maxWidth: 960, margin: "0 auto", padding: "36px 28px 60px" }}>
       <h1 style={{ fontFamily: serif, fontSize: 22, color: ink, marginBottom: 4 }}>{book.title}</h1>
       <div style={{ fontSize: 12.5, color: textSecondary, marginBottom: 24 }}>{book.state} · {book.author_editor}</div>
 
@@ -366,21 +411,53 @@ function BookReader({ book, call, onBuySuccess }) {
 
       {!locked && !sections && publishedEdition && <Spinner />}
 
-      {!locked && sections && (
-        <div style={{ display: "flex", gap: 24 }}>
-          <div style={{ width: 210, flexShrink: 0 }}>
-            {sections.map((s, i) => (
-              <button key={s.id} onClick={() => setActiveIdx(i)}
-                style={{ display: "block", width: "100%", textAlign: "left", background: i === activeIdx ? paperDeep : "transparent", border: "none", borderLeft: `2px solid ${i === activeIdx ? brass : "transparent"}`, padding: "8px 10px", fontSize: 12.5, color: i === activeIdx ? ink : textSecondary, cursor: "pointer" }}>
-                {s.title}
-              </button>
-            ))}
+      {!locked && sections && chapters.length > 0 && (
+        <div className="reader-layout" style={{ display: "flex", gap: 24 }}>
+          <div className="reader-toc" style={{ width: 260, flexShrink: 0 }}>
+            <input
+              value={tocFilter}
+              onChange={(e) => setTocFilter(e.target.value)}
+              placeholder="Filter sections…"
+              style={{ width: "100%", height: 30, border: `1px solid ${line}`, padding: "0 8px", fontSize: 12, marginBottom: 10 }}
+            />
+            <div style={{ maxHeight: "calc(100vh - 260px)", overflowY: "auto" }}>
+              {filteredChapters.map((chap) => {
+                const isOpen = !!expandedChapters[chap.id] || !!tocFilter.trim();
+                return (
+                  <div key={chap.id} style={{ marginBottom: 4 }}>
+                    <button
+                      onClick={() => setExpandedChapters((p) => ({ ...p, [chap.id]: !p[chap.id] }))}
+                      style={{ display: "flex", alignItems: "center", gap: 6, width: "100%", textAlign: "left", background: "transparent", border: "none", padding: "6px 4px", cursor: "pointer", fontSize: 11.5, color: brassDeep, letterSpacing: 0.2, textTransform: "uppercase" }}
+                    >
+                      <span>{isOpen ? "▾" : "▸"}</span>
+                      <span>{chap.title}</span>
+                    </button>
+                    {isOpen && chap.children.map((s) => (
+                      <button key={s.id} onClick={() => setActiveSectionId(s.id)}
+                        style={{ display: "block", width: "100%", textAlign: "left", background: s.id === activeSectionId ? paperDeep : "transparent", border: "none", borderLeft: `2px solid ${s.id === activeSectionId ? brass : "transparent"}`, padding: "7px 10px", fontSize: 12.5, color: s.id === activeSectionId ? ink : textSecondary, cursor: "pointer" }}>
+                        {s.title}
+                      </button>
+                    ))}
+                  </div>
+                );
+              })}
+            </div>
           </div>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <h2 style={{ fontFamily: serif, fontSize: 19, color: textPrimary, marginBottom: 14 }}>{sections[activeIdx].title}</h2>
-            {sections[activeIdx].content.split("\n").map((p, i) => (
-              <p key={i} style={{ fontFamily: serif, fontSize: 15.5, lineHeight: 1.75, color: textPrimary, marginBottom: 14 }}>{p}</p>
-            ))}
+          <div className="reading-pane" style={{ flex: 1, minWidth: 0, background: "#F4ECD8", border: `1px solid #E4D6B0`, padding: "32px 36px" }}>
+            {activeSection && (
+              <>
+                <h2 style={{ fontFamily: serif, fontSize: 20, fontWeight: 700, color: "#2A1F0F", marginBottom: 18 }}>{activeSection.title}</h2>
+                {activeSection.content.split("\n").map((p, i) => {
+                  const isBold = p.startsWith("**") && p.endsWith("**");
+                  const text = isBold ? p.slice(2, -2) : p;
+                  return (
+                    <p key={i} className="body-para" style={{ fontFamily: serif, fontSize: 16, lineHeight: 1.85, color: "#2A1F0F", marginBottom: 14, fontWeight: isBold ? 700 : 400 }}>
+                      {text}
+                    </p>
+                  );
+                })}
+              </>
+            )}
           </div>
         </div>
       )}
