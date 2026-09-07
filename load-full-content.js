@@ -22,22 +22,37 @@ async function main() {
       continue;
     }
 
-    // Replace entirely — this book's earlier 2-4 excerpt sections are removed
-    // and the full parsed structure takes their place.
+    // Replace entirely — this book's earlier excerpt sections are removed
+    // and the full parsed structure takes their place, this time preserving
+    // chapter grouping via parent_id so the reader can show a real TOC
+    // instead of one flat list of hundreds of sections.
     await pool.query(`DELETE FROM edition_sections WHERE edition_id = $1`, [edition.id]);
 
-    let order = 0;
     let sectionCount = 0;
+    let chapterIdx = 0;
     for (const chapter of book.chapters) {
+      // Give each chapter a wide sort_order band (chapterIdx * 10000) so a
+      // single flat "ORDER BY sort_order" keeps chapters and their sections
+      // correctly interleaved without needing a join at query time.
+      const chapterOrder = chapterIdx * 10000;
+      const chapterRes = await pool.query(
+        `INSERT INTO edition_sections (edition_id, parent_id, title, sort_order, content)
+         VALUES ($1, NULL, $2, $3, NULL) RETURNING id`,
+        [edition.id, chapter.chapterTitle, chapterOrder]
+      );
+      const chapterId = chapterRes.rows[0].id;
+
+      let subOrder = 1;
       for (const section of chapter.sections) {
-        const fullTitle = `${section.title}`;
         await pool.query(
-          `INSERT INTO edition_sections (edition_id, title, sort_order, content, search_text)
-           VALUES ($1, $2, $3, $4, $4)`,
-          [edition.id, fullTitle, order++, section.content]
+          `INSERT INTO edition_sections (edition_id, parent_id, title, sort_order, content, search_text)
+           VALUES ($1, $2, $3, $4, $5, $5)`,
+          [edition.id, chapterId, section.title, chapterOrder + subOrder, section.content]
         );
+        subOrder++;
         sectionCount++;
       }
+      chapterIdx++;
     }
     console.log(`${book.title}: loaded ${sectionCount} sections across ${book.chapters.length} chapters`);
   }
